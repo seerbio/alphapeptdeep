@@ -120,7 +120,8 @@ def get_batch_aa_indices(
     '''
     Convert peptide sequences into AA ID array. ID=0 is reserved for masking,
     so ID of 'A' is 1, ID of 'B' is 2, ..., ID of 'Z' is 26 (maximum). 
-    Zeros are padded into the N- and C-term for each sequence.
+    Zeros are padded into the N- and C-terms for each sequence and to fill the
+    array to the maximum sequence length.
     
     Parameters
     ----------
@@ -135,9 +136,11 @@ def get_batch_aa_indices(
         N- and C-term of each sequence, so the 1st-D is `len(seq_array[0])+2`.
 
     '''
-    x = np.array(seq_array).view(np.int32).reshape(
-        len(seq_array), -1
-    )-ord('A')+1
+    aa_offset = ord('A') - 1
+    x = np.maximum(
+            np.array(seq_array).view(np.int32).reshape(len(seq_array), -1),
+            aa_offset
+        ) - aa_offset
     # padding zeros at the N- and C-term
     return np.pad(x, [(0,0)]*(len(x.shape)-1)+[(1,1)])
 
