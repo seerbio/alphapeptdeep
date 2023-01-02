@@ -141,6 +141,8 @@ class ModelInterface(object):
     """
     def __init__(self,
         device:str=global_settings['torch_device']['device_type'],
+        split_batches_columns = 'nAA',
+        same_batch_columns = None,
         **kwargs
     ):
         self.model:torch.nn.Module = None
@@ -148,6 +150,8 @@ class ModelInterface(object):
         self.model_params:dict = {}
         self.set_device(device)
 
+        self._split_batches_columns = split_batches_columns
+        self._same_batch_columns = same_batch_columns
         self._min_pred_value = 0.0
 
     @property
@@ -215,47 +219,14 @@ class ModelInterface(object):
         self.model.to(self.device)
         self._init_for_training()
 
-    def train_with_warmup(self,
-        precursor_df: pd.DataFrame,
-        *,
-        batch_size=1024, 
-        epoch=10, 
-        warmup_epoch=5,
-        lr=1e-4,
-        verbose=False,
-        verbose_each_epoch=False,
-        **kwargs
-    ):
-        """
-        Train the model according to specifications. Includes a warumup 
-        phase with linear increasing and cosine decreasing for lr scheduling).
-        """
-        self._prepare_training(precursor_df, lr, **kwargs)
-
-        lr_scheduler = self._get_lr_schedule_with_warmup(
-            warmup_epoch, epoch
-        )
-
-        for epoch in range(epoch):
-            batch_cost = self._train_one_epoch(
-                precursor_df, epoch,
-                batch_size, verbose_each_epoch,
-                **kwargs
-            )
-            lr_scheduler.step()
-            if verbose: print(
-                f'[Training] Epoch={epoch+1}, lr={lr_scheduler.get_last_lr()[0]}, loss={np.mean(batch_cost)}'
-            )
-        
-        torch.cuda.empty_cache()
-
     def train(self,
         precursor_df: pd.DataFrame,
         *,
-        batch_size=1024, 
         epoch=10, 
-        warmup_epoch:int=0,
+        warmup_epoch=0,
         lr=1e-4,
+        batch_size=1024,
+        force_batches=False,
         verbose=False,
         verbose_each_epoch=False,
         **kwargs
@@ -263,34 +234,43 @@ class ModelInterface(object):
         """
         Train the model according to specifications.
         """
-        if warmup_epoch > 0:
-            self.train_with_warmup(
-                precursor_df,
-                batch_size=batch_size,
-                epoch=epoch,
-                warmup_epoch=warmup_epoch,
-                lr=lr,
-                verbose=verbose,
-                verbose_each_epoch=verbose_each_epoch,
+        self._prepare_training(precursor_df, lr, **kwargs)
+        self._prepare_batches(precursor_df, force=force_batches, batch_size=batch_size)
+
+        lr_scheduler = self._get_lr_schedule_with_warmup(
+            warmup_epoch, epoch
+        ) if warmup_epoch > 0 else \
+        LambdaLR(self.optimizer, lambda epoch: lr, -1) # if no warmup, keep constant LR
+
+        for epoch in range(epoch):
+            batch_cost = self._train_one_epoch(
+                precursor_df, epoch,
+                verbose_each_epoch,
                 **kwargs
             )
-        else:
-            self._prepare_training(precursor_df, lr, **kwargs)
+            lr_scheduler.step()
+            if verbose: print(
+                f'[Training] Epoch={epoch+1}, lr={lr_scheduler.get_last_lr()[0]}, loss={np.mean(batch_cost)}'
+            )
+        torch.cuda.empty_cache()
 
-            for epoch in range(epoch):
-                batch_cost = self._train_one_epoch(
-                    precursor_df, epoch,
-                    batch_size, verbose_each_epoch,
-                    **kwargs
-                )
-                if verbose: print(f'[Training] Epoch={epoch+1}, Mean Loss={np.mean(batch_cost)}')
-            
-            torch.cuda.empty_cache()
+    def train_with_warmup(self,
+        precursor_df: pd.DataFrame,
+        *,
+        warmup_epoch:int=5,
+        **kwargs
+    ):
+        """
+        Train the model according to specifications. Includes a warumup 
+        phase with linear increasing and cosine decreasing for lr scheduling).
+        """
+        self.train(precursor_df, warmup_epoch=warmup_epoch, **kwargs)
 
     def predict(self,
         precursor_df:pd.DataFrame,
         *,
-        batch_size:int=1024,
+        batch_size=1024,
+        force_batches=False,
         verbose:bool=False,
         **kwargs
     )->pd.DataFrame:
@@ -298,31 +278,21 @@ class ModelInterface(object):
         The model predicts the properties based on the inputs it has been trained for.
         Returns the ouput as a pandas dataframe.
         """
-        precursor_df = append_nAA_column_if_missing(precursor_df)
         self._check_predict_in_order(precursor_df)
         self._prepare_predict_data_df(precursor_df,**kwargs)
         self.model.eval()
 
-        _grouped = precursor_df.groupby('nAA')
-        if verbose:
-            batch_tqdm = tqdm(_grouped)
-        else:
-            batch_tqdm = _grouped
+        self._prepare_batches(precursor_df, force=force_batches, batch_size=batch_size)
+        batches = precursor_df.groupby('batch_index')
+        batches_tqdm = tqdm(batches) if verbose else batches
         with torch.no_grad():
-            for nAA, df_group in batch_tqdm:
-                for i in range(0, len(df_group), batch_size):
-                    batch_end = i+batch_size
-                    
-                    batch_df = df_group.iloc[i:batch_end,:]
-
+            for batch_ix, batch_df in batches_tqdm:
                     features = self._get_features_from_batch_df(
                         batch_df, **kwargs
                     )
 
-                    if isinstance(features, tuple):
-                        predicts = self._predict_one_batch(*features)
-                    else:
-                        predicts = self._predict_one_batch(features)
+                predicts = self._predict_one_batch(*features) if isinstance(features, tuple) \
+                    else self._predict_one_batch(features)
 
                     self._set_batch_predict_data(
                         batch_df, predicts, 
@@ -335,9 +305,11 @@ class ModelInterface(object):
     def predict_mp(self,
         precursor_df:pd.DataFrame,
         *,
-        batch_size:int=1024,
         mp_batch_size:int=100000,
+        batch_size=1024,
+        force_batches=False,
         process_num:int=global_settings['thread_num'],
+        verbose:bool=False,
         **kwargs
     )->pd.DataFrame:
         """
@@ -345,38 +317,38 @@ class ModelInterface(object):
         Note this multiprocessing method only works for models those predict
         values within (inplace of) the precursor_df.
         """
-        precursor_df = append_nAA_column_if_missing(precursor_df)
+        self._prepare_batches(precursor_df, force=force_batches, batch_size=batch_size)
+        # assign mp batches (group together batches to have <= mp_batch_size length)
+        cur_mpbatch_index = 0
+        cur_mpbatch_size = 0
+        precursor_df['mp_batch_index'] = 0
+        precursor_df_batches = precursor_df.groupby('batch_index')
+        for batch_ix, batch_df in precursor_df_batches:
+            if cur_mpbatch_size > 0 and cur_mpbatch_size + len(batch_df) > mp_batch_size:
+                # start new mpbatch
+                cur_mpbatch_size = 0
+                cur_mpbatch_index += 1
+            cur_mpbatch_size += len(batch_df)
+            precursor_df.loc[precursor_df_batches.indices[batch_ix], 'mp_batch_index'] = cur_mpbatch_index
 
         if self.device_type != 'cpu':
             return self.predict(
                 precursor_df, 
-                batch_size=batch_size,
+                force_batches=False, batch_size=batch_size,
                 verbose=False,
                 **kwargs
             )
             
-        _predict_func = functools.partial(self.predict, 
-            batch_size=batch_size, verbose=False, **kwargs
-        )
-
-        def batch_df_gen(precursor_df, mp_batch_size):
-            for i in range(0, len(precursor_df), mp_batch_size):
-                yield precursor_df.iloc[i:i+mp_batch_size]
-
         self._check_predict_in_order(precursor_df)
         self._prepare_predict_data_df(precursor_df,**kwargs)
 
-        print("Predicting with multiprocessing ...")
+        if verbose: print("Predicting with multiprocessing ...")
         self.model.share_memory()
-        df_list = []
-        with mp.Pool(process_num) as p:
-            for ret_df in process_bar(p.imap(
-                    _predict_func,
-                    batch_df_gen(precursor_df, mp_batch_size),
-                ), len(precursor_df)//mp_batch_size+1
-            ):
-                df_list.append(ret_df)
-
+        df_list = process_bar(mp.Pool(process_num).imap(
+                    functools.partial(self.predict, verbose=False, **kwargs),
+                    precursor_df.groupby('mp_batch_index')
+                ), cur_mpbatch_index
+            )
         self.predict_df = pd.concat(df_list)
         self.predict_df.reset_index(drop=True, inplace=True)
         
@@ -532,42 +504,32 @@ class ModelInterface(object):
             logging.info(f'Cannot save model source codes: {str(e)}')
 
     def _train_one_epoch(self, 
-        precursor_df, epoch, batch_size, verbose_each_epoch, 
+        precursor_df:pd.DataFrame,
+        epoch, verbose_each_epoch, 
         **kwargs
     ):
         """Training for an epoch"""
         batch_cost = []
-        _grouped = list(precursor_df.sample(frac=1).groupby('nAA'))
-        rnd_nAA = np.random.permutation(len(_grouped))
-        if verbose_each_epoch:
-            batch_tqdm = tqdm(rnd_nAA)
-        else:
-            batch_tqdm = rnd_nAA
-        for i_group in batch_tqdm:
-            nAA, df_group = _grouped[i_group]
-            # df_group = df_group.reset_index(drop=True)
-            for i in range(0, len(df_group), batch_size):
-                batch_end = i+batch_size
-
-                batch_df = df_group.iloc[i:batch_end,:]
+        precursor_batches = list(precursor_df.sample(frac=1).groupby('batch_index'))
+        batches_order = np.random.permutation(len(precursor_batches))
+        batches_order_tqdm = tqdm(batches_order) if verbose_each_epoch else batches_order
+        for i_batch in batches_order_tqdm:
+            batch_ix, batch_df = precursor_batches[i_batch]
+            # batch_df = batch_df.reset_index(drop=True)
                 targets = self._get_targets_from_batch_df(
                     batch_df, **kwargs
                 )
                 features = self._get_features_from_batch_df(
                     batch_df, **kwargs
                 )
-                if isinstance(features, tuple):
                     batch_cost.append(
-                        self._train_one_batch(targets, *features)
-                    )
-                else:
-                    batch_cost.append(
-                        self._train_one_batch(targets, features)
+                self._train_one_batch(targets, *features) if isinstance(features, tuple)
+                else self._train_one_batch(targets, features)
                     )
                 
             if verbose_each_epoch:
-                batch_tqdm.set_description(
-                    f'Epoch={epoch+1}, nAA={nAA}, batch={len(batch_cost)}, loss={batch_cost[-1]:.4f}'
+                batches_order_tqdm.set_description(
+                    f'Epoch={epoch+1}, batch={len(batch_cost)}, loss={batch_cost[-1]:.4f}'
                 )
         return batch_cost
 
@@ -751,6 +713,12 @@ class ModelInterface(object):
         return get_cosine_schedule_with_warmup(
             self.optimizer, warmup_epoch, epoch
         )
+
+    def _prepare_batches(self, precursor_df:pd.DataFrame, **kwargs) -> pd.DataFrame:
+        return assign_batches(precursor_df,
+                              split_batches_columns=self._split_batches_columns,
+                              same_batch_columns=self._same_batch_columns,
+                              **kwargs)
 
     def _prepare_training(self, precursor_df, lr, **kwargs):
         if 'nAA' not in precursor_df.columns:
