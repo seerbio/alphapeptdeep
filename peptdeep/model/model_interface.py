@@ -39,7 +39,7 @@ def get_cosine_schedule_with_warmup(
     optimizer, num_warmup_steps, 
     num_training_steps, num_cycles=0.5, 
     last_epoch=-1
-):
+) -> LambdaLR:
     """ Create a schedule with a learning rate that decreases following the
     values of the cosine function between 0 and `pi * cycles` after a warmup
     period during which it increases linearly between 0 and 1.
@@ -56,14 +56,14 @@ def get_cosine_schedule_with_warmup(
 
     return LambdaLR(optimizer, lr_lambda, last_epoch)
 
-def append_nAA_column_if_missing(precursor_df):
+def append_nAA_column_if_missing(precursor_df:pd.DataFrame) -> pd.DataFrame:
     """
-    Append a column containing the number of Amino Acids
+    Append `'nAA'` column containing the number of Amino Acids in each sequence
     """
     if 'nAA' not in precursor_df.columns:
         precursor_df['nAA'] = precursor_df.sequence.str.len()
         precursor_df.sort_values('nAA', inplace=True)
-        precursor_df.reset_index(drop=True,inplace=True)
+        precursor_df.reset_index(drop=True, inplace=True)
     return precursor_df
 
 # %% ../../nbdev_nbs/model/model_interface.ipynb 8
