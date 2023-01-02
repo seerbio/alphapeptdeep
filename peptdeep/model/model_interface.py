@@ -721,7 +721,7 @@ class ModelInterface(object):
             for g in self.optimizer.param_groups:
                 g['lr'] = lr
 
-    def _get_lr_schedule_with_warmup(self, warmup_epoch, epoch):
+    def _get_lr_schedule_with_warmup(self, warmup_epoch, epoch) -> LambdaLR:
         if warmup_epoch > epoch:
             warmup_epoch = epoch//2
         return get_cosine_schedule_with_warmup(
