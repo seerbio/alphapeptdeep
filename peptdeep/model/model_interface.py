@@ -143,6 +143,8 @@ class ModelInterface(object):
         device:str=global_settings['torch_device']['device_type'],
         split_batches_columns = 'nAA',
         same_batch_columns = None,
+        target_column_to_predict = None,
+        target_column_to_train = None,
         **kwargs
     ):
         self.model:torch.nn.Module = None
@@ -152,6 +154,8 @@ class ModelInterface(object):
 
         self._split_batches_columns = split_batches_columns
         self._same_batch_columns = same_batch_columns
+        self._target_column_to_predict = target_column_to_predict
+        self._target_column_to_train = target_column_to_train
         self._min_pred_value = 0.0
 
     @property
@@ -533,6 +537,17 @@ class ModelInterface(object):
                 )
         return batch_cost
 
+    def _one_batch_cost(
+        self,
+        targets:torch.Tensor,
+        predictions:torch.Tensor,
+        *features
+    ):
+        """Calculate the predictions cost for one batch.
+           The default implementation calls `loss_func(predictions, targets)`.
+        """
+        return self.loss_func(predictions, targets)
+
     def _train_one_batch(
         self, 
         targets:torch.Tensor, 
@@ -540,8 +555,7 @@ class ModelInterface(object):
     ):
         """Training for a mini batch"""
         self.optimizer.zero_grad()
-        predicts = self.model(*features)
-        cost = self.loss_func(predicts, targets)
+        cost = self._one_batch_cost(targets, self.model(*features), *features)
         cost.backward()
         torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
         self.optimizer.step()
