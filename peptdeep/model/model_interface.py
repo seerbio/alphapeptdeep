@@ -110,12 +110,13 @@ def assign_batches(
     else:
         cur_batch_index = 0
         df['batch_index'] = 0
+        batch_col_ix = df.columns.get_loc('batch_index')
         df_grouped = df.groupby(split_batches_columns)
         for batch_id, batches_df in df_grouped:
             batch_rows = df_grouped.indices[batch_id]
             if same_batch_columns is None:
                 # when precursors are independent from each other
-                df.loc[batch_rows, 'batch_index'] = cur_batch_index + np.floor_divide(range(0, len(batches_df)), batch_size)
+                df.iloc[batch_rows, batch_col_ix] = cur_batch_index + np.floor_divide(range(0, len(batches_df)), batch_size)
             else:
                 # assign precusors that have the same values in same_batch_columns to the same batch
                 cur_batch_size = 0
@@ -128,8 +129,9 @@ def assign_batches(
                         cur_batch_index += 1
                     cur_batch_size += len(atomic_df)
                     #print(f'#{cur_batch_index}({cur_batch_size}): {atomid} ({atomic_rows})')
-                    df.loc[atomic_rows, 'batch_index'] = cur_batch_index
-            cur_batch_index = df.loc[batch_rows[-1], 'batch_index'] + 1
+                    df.iloc[atomic_rows, batch_col_ix] = cur_batch_index
+            if len(batch_rows) > 0:
+                cur_batch_index = df.iat[batch_rows[-1], batch_col_ix] + 1
     return df
 
 # %% ../../nbdev_nbs/model/model_interface.ipynb 8
@@ -291,17 +293,17 @@ class ModelInterface(object):
         batches_tqdm = tqdm(batches) if verbose else batches
         with torch.no_grad():
             for batch_ix, batch_df in batches_tqdm:
-                    features = self._get_features_from_batch_df(
-                        batch_df, **kwargs
-                    )
+                features = self._get_features_from_batch_df(
+                    batch_df, **kwargs
+                )
 
                 predicts = self._predict_one_batch(*features) if isinstance(features, tuple) \
                     else self._predict_one_batch(features)
 
-                    self._set_batch_predict_data(
-                        batch_df, predicts, 
-                        **kwargs
-                    )
+                self._set_batch_predict_data(
+                    batch_df, predicts,
+                    **kwargs
+                )
 
         torch.cuda.empty_cache()
         return self.predict_df
@@ -337,7 +339,7 @@ class ModelInterface(object):
 
         if self.device_type != 'cpu':
             return self.predict(
-                precursor_df, 
+                precursor_df,
                 force_batches=False, batch_size=batch_size,
                 verbose=False,
                 **kwargs
@@ -520,17 +522,17 @@ class ModelInterface(object):
         for i_batch in batches_order_tqdm:
             batch_ix, batch_df = precursor_batches[i_batch]
             # batch_df = batch_df.reset_index(drop=True)
-                targets = self._get_targets_from_batch_df(
-                    batch_df, **kwargs
-                )
-                features = self._get_features_from_batch_df(
-                    batch_df, **kwargs
-                )
-                    batch_cost.append(
+            targets = self._get_targets_from_batch_df(
+                batch_df, **kwargs
+            )
+            features = self._get_features_from_batch_df(
+                batch_df, **kwargs
+            )
+            batch_cost.append(
                 self._train_one_batch(targets, *features) if isinstance(features, tuple)
                 else self._train_one_batch(targets, features)
-                    )
-                
+            )
+
             if verbose_each_epoch:
                 batches_order_tqdm.set_description(
                     f'Epoch={epoch+1}, batch={len(batch_cost)}, loss={batch_cost[-1]:.4f}'
@@ -550,7 +552,7 @@ class ModelInterface(object):
 
     def _train_one_batch(
         self, 
-        targets:torch.Tensor, 
+        targets:torch.Tensor,
         *features,
     ):
         """Training for a mini batch"""
