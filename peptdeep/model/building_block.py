@@ -40,13 +40,13 @@ num_ion_types = len(frag_types)*max_frag_charge
 aa_embedding_size = model_const['aa_embedding_size']
 
 # %% ../../nbdev_nbs/model/building_block.ipynb 8
-def aa_embedding(hidden_size):
+def aa_embedding(hidden_size, aa_embedding_size=aa_embedding_size):
     return torch.nn.Embedding(aa_embedding_size, hidden_size, padding_idx=0)
 
 def ascii_embedding(hidden_size):
     return torch.nn.Embedding(128, hidden_size, padding_idx=0)
 
-def aa_one_hot(aa_indices, *cat_others):
+def aa_one_hot(aa_indices, *cat_others, aa_embedding_size=aa_embedding_size):
     aa_x = torch.nn.functional.one_hot(
         aa_indices, aa_embedding_size
     )
