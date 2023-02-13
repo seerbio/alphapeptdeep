@@ -18,11 +18,8 @@ from alphabase.peptide.mobility import (
 )
 
 from peptdeep.model.featurize import (
-    get_batch_aa_indices, 
-    get_batch_mod_feature
+    mod_feature_size
 )
-
-from ..settings import model_const
 
 import peptdeep.model.base as model_base
 
