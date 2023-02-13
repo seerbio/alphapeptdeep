@@ -458,12 +458,20 @@ InputMetaNet = Meta_Embedding
 class Mod_Embedding_FixFirstK(torch.nn.Module):
     """
     Encodes the modification vector in a single layer feed forward network, but not transforming the first k features
+
+    Parameters
+    ----------
+    out_features: int
+        how many features to output
+    k: int
+        how many first features to keep, defaults to 6 (the core organic elements: C, H, N, O, P, S)
     """
     def __init__(self,
-        out_features,
+        out_features:int,
+        k:int = 6,
     ):
         super().__init__()
-        self.k = 6
+        self.k = k
         self.nn = torch.nn.Linear(
             mod_feature_size-self.k, out_features-self.k,
             bias=False
@@ -482,17 +490,24 @@ InputModNetFixFirstK = Mod_Embedding_FixFirstK
 class AA_Mod_Embedding(torch.nn.Module):
     """
     Concatenates the AA (128 ASCII codes) embedding with the modifcation vector
+
+    Parameters
+    ----------
+    out_features: int
+        modification embeding size
+    mod_features: int
+        how many first modification features to keep
     """
     def __init__(self,
         out_features,
-        mod_feature_size = 8,
+        mod_features = 8,
     ):
         super().__init__()
         self.mod_embedding = Mod_Embedding_FixFirstK(
-            mod_feature_size
+            mod_features
         )
         self.aa_embedding = ascii_embedding(
-            out_features-mod_feature_size
+            out_features-mod_features
         )
     def forward(self, aa_indices, mod_x):
         mod_x = self.mod_embedding(mod_x)
@@ -823,7 +838,7 @@ class Encoder_AA_Mod_CNN_LSTM_AttnSum(torch.nn.Module):
         mod_hidden = 8
         input_dim = out_features//4
         self.aa_mod_embedding = AA_Mod_Embedding(
-            input_dim, mod_feature_size=mod_hidden
+            input_dim, mod_features=mod_hidden
         )
         self.input_cnn = SeqCNN(input_dim)
         self.hidden_nn = SeqLSTM(
