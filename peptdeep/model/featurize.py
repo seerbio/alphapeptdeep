@@ -94,38 +94,34 @@ def parse_mod_feature(
 
 # %% ../../nbdev_nbs/model/featurize.ipynb 9
 def get_batch_mod_feature(
-    batch_df: pd.DataFrame
+    batch_df: pd.DataFrame,
+    *,
+    nAA: int = None
 )->np.ndarray:
     '''
     Parameters
     ----------
     batch_df : pd.DataFrame
-        dataframe with 'sequence', 'mods', 'mod_sites' and 'nAA' columns.
-        All sequence lengths must be the same, meaning that nAA values must be equal.
+        dataframe with 'mods' and 'mod_sites' columns.
+    nAA : maximal AA sequence length in the dataset. If not specified,
+        the length of the first element of the 'sequence' is used,
+        assuming that all sequences in 'batch_df' have the same length.
 
     Returns
     -------
     np.ndarray
         3-D tensor with shape (batch_size, nAA+2, mod_feature_size)
     '''
-    mod_x_batch = np.zeros((len(batch_df), batch_df.nAA.values[0]+2, mod_feature_size))
-    mod_features_list = batch_df.mods.str.split(';').apply(
-        lambda mod_names: [
-            MOD_TO_FEATURE[mod] for mod in mod_names
-            if len(mod)>0
-        ]
-    )
-    mod_sites_list = batch_df.mod_sites.str.split(';').apply(
-        lambda mod_sites:[
-            int(site) for site in mod_sites
-            if len(site)>0
-        ]
-    )
-    for i, (mod_feas, mod_sites) in enumerate(
-        zip(mod_features_list, mod_sites_list)
+    nAA = nAA if nAA != None \
+          else batch_df.nAA.values[0] if 'nAA' in batch_df.columns \
+          else len(batch_df.sequence.values[0])-2
+    mod_x_batch = np.zeros((len(batch_df), nAA+2, mod_feature_size))
+    for i, (mods_str, sites_pos_str) in enumerate(
+        zip(batch_df.mods.values, batch_df.mod_sites.values)
     ):
-        if len(mod_sites)>0:
-            mod_x_batch[i,mod_sites,:] = mod_feas
+        for mod, site_pos in zip(mods_str.split(';'), sites_pos_str.split(';')):
+            if len(site_pos)>0 and len(mod)>0:
+                mod_x_batch[i,int(site_pos),:] = MOD_TO_FEATURE[mod]
     return mod_x_batch
 
 # %% ../../nbdev_nbs/model/featurize.ipynb 10
