@@ -57,7 +57,7 @@ def parse_mod_feature(
     Parameters
     ----------
     nAA : int
-        the lenght of the peptide sequence
+        the length of the peptide sequence
 
     mod_names : List[str]
         the modification names
