@@ -480,10 +480,11 @@ class Mod_Embedding_FixFirstK(torch.nn.Module):
     def forward(self,
         mod_x,
     ):
-        return torch.cat((
-            mod_x[:,:,:self.k], 
-            self.nn(mod_x[:,:,self.k:])
-        ), 2)
+        return mod_x if mod_x.shape[2] <= self.k \
+            else torch.cat((
+                mod_x[:,:,:self.k],
+                self.nn(mod_x[:,:,self.k:])
+            ), 2)
 #legacy
 InputModNetFixFirstK = Mod_Embedding_FixFirstK
 
