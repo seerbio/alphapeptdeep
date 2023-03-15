@@ -18,8 +18,9 @@ def all_used_mod_elements(mod_formulas):
     """
     Collect all chemical elements present in AA modifications.
     """
-    # collect all elements observed in mods_chem
-    used_elems_set = set()
+    # collect all core elements + observed in mods_chem
+    mod_elements = model_const['mod_elements']
+    used_elems_set = set(mod_elements[1:6])
     for formula in mod_formulas.values():
         elems = formula.strip(')').split(')')
         for elem in elems:
