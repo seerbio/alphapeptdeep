@@ -468,14 +468,15 @@ class Mod_Embedding_FixFirstK(torch.nn.Module):
     """
     def __init__(self,
         out_features:int,
-        k:int = 6,
+        k:int = 6, *,
+        mod_features:int = mod_feature_size
     ):
         super().__init__()
         self.k = k
         self.nn = torch.nn.Linear(
-            mod_feature_size-self.k, out_features-self.k,
+            mod_features-self.k, out_features-self.k,
             bias=False
-        )
+        ) if out_features > k else torch.nn.Identity()
 
     def forward(self,
         mod_x,
